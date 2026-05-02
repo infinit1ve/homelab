@@ -1,0 +1,26 @@
+# A totally unnecessary container for mining Solana on an Intel iGPU 🤪
+
+services:
+  xmrig-solana:
+    image: miningcontainers/xmrig:latest
+    container_name: xmrig_worker
+    restart: unless-stopped
+    # Privileged is required for MSR mod (RandomX boost)
+    privileged: true
+    devices:
+      - /dev/dri:/dev/dri # Passes the GPU to the container
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    command:
+      - -o
+      - rx.unmineable.com:3333
+      - -a
+      - rx/0
+      - -u
+      - "SOL:your-solana-address.your-name"
+      - --opencl # Enables the iGPU
+      - --cpu-priority
+      - "5"
+      - -p
+      - x

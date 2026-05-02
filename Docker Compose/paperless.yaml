@@ -1,0 +1,78 @@
+services:
+  paperless-redis:
+    image: docker.io/library/redis:8
+    container_name: paperless-redis
+    restart: unless-stopped
+    volumes:
+      - redisdata:/data
+
+  paperless-ngx:
+    image: ghcr.io/paperless-ngx/paperless-ngx:latest
+    container_name: paperless-ngx
+    restart: unless-stopped
+    depends_on:
+      - paperless-redis
+    ports:
+      - "5003:8000"
+    volumes:
+      - /your-path/paperless/ngx:/usr/src/paperless/data
+      - /your-path/paperless/documents:/usr/src/paperless/media
+      - /your-path/paperless/export:/usr/src/paperless/export
+      - /your-path/paperless/consume:/usr/src/paperless/consume
+    environment:
+      PAPERLESS_REDIS: redis://paperless-redis:6379
+      PAPERLESS_TIME_ZONE: Europe/Berlin
+      PAPERLESS_OCR_LANGUAGE: deu
+      # PAPERLESS_OCR_LANGUAGES: additional languages
+      PAPERLESS_FILENAME_FORMAT: "{{ created_year }}/{{ correspondent }}/{{ created }} {{ correspondent }} {{ title }}"
+      PAPERLESS_URL: https://example.com
+
+      # PAPERLESS_ENABLE_ALLAUTH: "true"
+      # PAPERLESS_APPS: allauth.socialaccount.providers.openid_connect
+      # PAPERLESS_AUTO_LOGIN: "true"
+      # PAPERLESS_AUTO_CREATE: "true"
+      # PAPERLESS_LOGOUT_REDIRECT_URL: https://auth.infinitive.cc/application/o/paperless/end-session/
+
+      # PAPERLESS_SOCIALACCOUNT_PROVIDERS: |
+      #   {
+      #     "openid_connect": {
+      #       "APPS": [
+      #         {
+      #           "provider_id": "your-authentik",
+      #           "name": "your-authentik",
+      #           "client_id": "your-client_id",
+      #           "secret": "your-secret",
+      #           "settings": {
+      #             "server_url": "your-server-url",
+      #             "claims": { "username": "email" }
+      #           }
+      #         }
+      #       ],
+      #       "OAUTH_PKCE_ENABLED": true
+      #     }
+      #   }
+
+  paperless-ai:
+    image: clusterzx/paperless-ai
+    container_name: paperless-ai
+    restart: unless-stopped
+    depends_on:
+      - paperless-ngx
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      PUID: 1000
+      PGID: 1000
+      PAPERLESS_AI_PORT: ${PAPERLESS_AI_PORT:-3000}
+      RAG_SERVICE_URL: http://paperless-ngx:8000
+      RAG_SERVICE_ENABLED: "true"
+      PAPERLESS_API_TOKEN: your-token
+    ports:
+      - "6002:${PAPERLESS_AI_PORT:-3000}"
+    volumes:
+      - /your-path/paperless/ai:/app/data
+
+volumes:
+  redisdata:

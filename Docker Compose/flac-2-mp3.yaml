@@ -1,0 +1,29 @@
+# Converts FLAC files to MP3 using FFmpeg to save space.
+
+services:
+  converter:
+    image: jrottenberg/ffmpeg:4.4-ubuntu
+    volumes:
+      - /your-path/music:/music
+    working_dir: /music
+    entrypoint:
+      - /bin/bash
+      - -c
+      - |
+        shopt -s globstar nullglob
+        echo "Starting recursive FLAC → MP3 conversion..."
+        for f in **/*.flac; do
+          [ -e "$$f" ] || continue
+          out="$${f%.flac}.mp3"
+          echo "Converting: $$f"
+          ffmpeg -y -i "$$f" -codec:a libmp3lame -qscale:a 2 "$$out"
+          if [ $$? -eq 0 ]; then
+            echo "Success → removing original: $$f"
+            rm -f "$$f"
+          else
+            echo "ERROR converting $$f — preserving original and removing incomplete MP3."
+            rm -f "$$out"
+          fi
+        done
+        echo "All conversions completed."
+    restart: "no"

@@ -1,0 +1,328 @@
+services:
+  # ---------- VPN (Gluetun) ----------
+  gluetun:
+    image: qmcgaw/gluetun:latest
+    container_name: gluetun
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    environment:
+      - TZ=Europe/Berlin
+      - VPN_SERVICE_PROVIDER=your-provider
+      - VPN_TYPE=wireguard
+      - WIREGUARD_PRIVATE_KEY=your-key
+      - WIREGUARD_ADDRESSES=your-address
+    ports:
+      - "4007:8080" # qBittorrent Web UI (host 4007 -> internal 8080)
+      - "6881:6881" # torrent TCP (optional, for incoming peers)
+      - "6881:6881/udp" # torrent UDP (DHT)
+    volumes:
+      - /your-path/gluetun:/gluetun
+    restart: unless-stopped
+
+  # ---------- qBittorrent (runs exclusively through Gluetun) ----------
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    container_name: qbittorrent
+    network_mode: "service:gluetun" # <-- forces all traffic through the VPN container
+    depends_on:
+      - gluetun
+    environment:
+      - PUID=99
+      - PGID=100
+      - TZ=Europe/Berlin
+      - WEBUI_PORT=8080
+      - TORRENTING_PORT=6881
+    volumes:
+      - /your-path/qbittorrent:/config
+      - /your-path/downloads:/downloads
+    restart: unless-stopped
+    # NOTE: qbittorrent will not be accessible via Docker DNS from other containers.
+    # Use http://<HOST-IP>:4007 in Sonarr/Radarr/Lidarr to talk to the qBittorrent WebUI.
+
+  # ---------- Prowlarr (indexer manager) ----------
+  prowlarr:
+    image: lscr.io/linuxserver/prowlarr:latest
+    container_name: prowlarr
+    dns:
+      - 9.9.9.9
+    environment:
+      - PUID=99
+      - PGID=100
+      - TZ=Europe/Berlin
+    volumes:
+      - /your-path/prowlarr:/config
+    ports:
+      - "4008:9696" # Prowlarr default 9696 -> host 4008
+    networks:
+      - arr-network
+    restart: unless-stopped
+
+  # ---------- FlareSolverr (Cloudflare captcha/JS solver) ----------
+  flaresolverr:
+    image: flaresolverr/flaresolverr:latest
+    container_name: flaresolverr
+    dns:
+      - 9.9.9.9
+    environment:
+      - LOG_LEVEL=info
+      - TZ=Europe/Berlin
+      # Optional: CAPTCHA_SOLVER adapter config can be added here
+    volumes:
+      - /your-path/flaresolverr:/config
+    ports:
+      - "4009:8191" # FlareSolverr default 8191 -> host 4009
+    networks:
+      - arr-network
+    restart: unless-stopped
+
+  # ---------- Sonarr ----------
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:latest
+    container_name: sonarr
+    environment:
+      - PUID=99
+      - PGID=100
+      - TZ=Europe/Berlin
+    volumes:
+      - /your-path/sonarr:/config
+      - /your-path/downloads:/downloads
+      - /your-path/media/shows:/tv
+      - /your-path/media/anime:/anime
+    ports:
+      - "4001:8989"
+    networks:
+      - arr-network
+    restart: unless-stopped
+
+  # ---------- Radarr ----------
+  radarr:
+    image: lscr.io/linuxserver/radarr:latest
+    container_name: radarr
+    environment:
+      - PUID=99
+      - PGID=100
+      - TZ=Europe/Berlin
+    volumes:
+      - /your-path/radarr:/config
+      - /your-path/downloads:/downloads
+      - /your-path/media/movies:/movies
+    ports:
+      - "4002:7878"
+    networks:
+      - arr-network
+    restart: unless-stopped
+
+  # ---------- Lidarr ----------
+  lidarr:
+    image: lscr.io/linuxserver/lidarr:latest
+    container_name: lidarr
+    environment:
+      - PUID=99
+      - PGID=100
+      - TZ=Europe/Berlin
+    volumes:
+      - /your-path/lidarr:/config
+      - /your-path/downloads:/downloads
+      - /your-path/media/music:/music
+    ports:
+      - "4003:8686"
+    networks:
+      - arr-network
+    restart: unless-stopped
+
+  # ---------- Bazarr ----------
+  bazarr:
+    image: lscr.io/linuxserver/bazarr:latest
+    container_name: bazarr
+    environment:
+      - PUID=99
+      - PGID=100
+      - TZ=Europe/Berlin
+    volumes:
+      - /your-path/bazarr:/config
+      - /your-path/downloads:/downloads
+      - /your-path/media:/media
+    ports:
+      - "4004:6767"
+    networks:
+      - arr-network
+    restart: unless-stopped
+
+  # ---------- Bookshelf ----------
+  bookshelf:
+    image: ghcr.io/pennydreadful/bookshelf:hardcover
+    container_name: bookshelf
+    environment:
+      - PUID=99
+      - PGID=100
+      - TZ=Europe/Berlin
+    ports:
+      - "4012:8787"
+    volumes:
+      - /your-path/bookshelf:/config
+      - /your-path/media/books:/books
+      - /your-path/downloads:/downloads
+    networks:
+      - arr-network
+    restart: unless-stopped
+
+  # ---------- Navidrome ----------
+  navidrome:
+    image: deluan/navidrome:latest
+    container_name: navidrome
+    ports:
+      - 4010:4533
+    restart: unless-stopped
+    environment:
+      - PUID=99
+      - PGID=100
+      - UMASK=002
+      - TZ=Europe/Berlin
+      - Plugins.Enabled=true
+      - ND_PLUGINS_ENABLED=true
+      - ND_ENABLEEXTERNALSERVICES=true
+      - ND_COVERARTPRIORITY=embedded,folder,external
+    volumes:
+      - /your-path/navidrome:/data
+      - /your-path/media/music:/music
+    networks:
+      - arr-network
+
+  # ---------- Jellyfin ----------
+  jellyfin:
+    image: jellyfin/jellyfin:latest
+    container_name: jellyfin
+    environment:
+      - TZ=Europe/Berlin
+    devices:
+      - /dev/dri/renderD128:/dev/dri/renderD128 # make sure the correct GPU is passed through (ls /dev/dri/renderD*)
+    volumes:
+      - /your-path/jellyfin:/config
+      - /your-path/media/movies:/media/movies
+      - /your-path/media/shows:/media/shows
+      - /your-path/media/anime:/media/anime
+      - /your-path/media/music:/media/music
+      - /your-path/media/books:/media/books
+      - /your-path/media/transcodes:/transcodes
+    ports:
+      - "4000:8096"
+    networks:
+      - media-network
+    restart: unless-stopped
+
+  # ---------- Jellystat (with Postgres) ----------
+  jellystat-db:
+    image: postgres:15.14
+    shm_size: "1gb"
+    container_name: jellystat-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: jellystat
+      POSTGRES_USER: jellystat
+      POSTGRES_PASSWORD: your-password
+    volumes:
+      - /your-path/jellystat-db:/var/lib/postgresql/data
+    networks:
+      - media-network
+
+  jellystat:
+    image: cyfershepard/jellystat:latest
+    container_name: jellystat
+    restart: unless-stopped
+    environment:
+      POSTGRES_IP: jellystat-db
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: jellystat
+      POSTGRES_USER: jellystat
+      POSTGRES_PASSWORD: your-password
+      JWT_SECRET: "your-secret" # you can use openssl rand -base64 32 to generate a secure secret
+      TZ: Europe/Berlin
+    volumes:
+      - /your-path/jellystat:/app/backend/backup-data
+    ports:
+      - "4006:3000"
+    depends_on:
+      - jellystat-db
+    networks:
+      - media-network
+
+  # ---------- Seerr / Jellyseerr ----------
+  seerr:
+    image: ghcr.io/fallenbagel/jellyseerr:latest
+    container_name: seerr
+    init: true
+    environment:
+      - LOG_LEVEL=info
+      - TZ=Europe/Berlin
+      - PORT=5055
+    volumes:
+      - /your-path/seerr:/app/config
+    ports:
+      - "4005:5055"
+    healthcheck:
+      test: wget --no-verbose --tries=1 --spider http://localhost:5055/api/v1/status || exit 1
+      start_period: 20s
+      timeout: 3s
+      interval: 15s
+      retries: 3
+    networks:
+      - media-network
+    restart: unless-stopped
+
+  # ---------- Explo ----------
+  explo:
+    image: ghcr.io/lumepart/explo:latest
+    restart: unless-stopped
+    container_name: explo
+    networks:
+      - media-network
+    volumes:
+      - /your-path/explo/.env:/opt/explo/.env
+      - /your-path/media/music/explo:/data/ # has to be in the same path you have your music system pointed to (it's recommended to put explo under a subfolder)
+      # - /path/to/slskd/downloads:/slskd/ # if using slskd and MIGRATE_DOWNLOADS is set to true in .env
+      # - $PLAYLIST_DIR:$PLAYLIST_DIR # for MPD. Both paths should be as defined in .env (e.g /my/playlists/:/my/playlists/)
+
+      # - /path/to/cookies.txt:/opt/explo/cookies.txt # Path to optional cookies file (for yt-dlp)
+    environment:
+      - TZ=Europe/Berlin # Change this to the timezone set in ListenBrainz (default is UTC)
+
+      - WEEKLY_EXPLORATION_SCHEDULE=15 00 * * 2 # Runs weekly, every Tuesday 15 minutes past midnight
+      - WEEKLY_EXPLORATION_FLAGS= # Run weekly exploration with default settings
+
+      # Uncomment _SCHEDULE and _FLAGS variables to enable fetching different playlist
+      - WEEKLY_JAMS_SCHEDULE=30 00 * * 1 # Runs weekly, every Monday 30 minutes past midnight
+      - WEEKLY_JAMS_FLAGS=--playlist=weekly-jams # Get tracks from weekly-jams, and only add tracks that are found locally to playlist
+
+      - DAILY_JAMS_SCHEDULE=15 01 * * * # Runs daily, every day 15 minutes past 1PM
+      - DAILY_JAMS_FLAGS=--playlist=daily-jams --download-mode=skip # Get tracks from daily-jams, and only add tracks that are found locally to playlist
+
+      # Uncomment for testing (runs explo right after launcing the container)
+      #- EXECUTE_ON_START=false # Whether to run explo when starting the container (useful for testing)
+      #- START_FLAGS=--persist=false # if needed, set startup flags for testing
+      - LISTENBRAINZ_USER=your-username
+      # 'playlist' to fetch weekly playlist (50 songs), 'api' for fewer songs (good for testing) (default: playlist)
+      # LISTENBRAINZ_DISCOVERY=playlist
+      - YOUTUBE_API_KEY=your-api-key
+
+      # === Music System Configuration ===
+
+      # Music system you use: emby, jellyfin, mpd, plex or subsonic
+      - EXPLO_SYSTEM=subsonic
+      # Address of your media system (e.g. http://127.0.0.1:4533)
+      - SYSTEM_URL=http://navidrome:4533
+      # Username with access to system (required for all except mpd)
+      - SYSTEM_USERNAME=your-username
+      - SYSTEM_PASSWORD=your-password
+      # API Key from your media system (required for emby and jellyfin, optional for plex)
+      # - API_KEY=your-api-key
+      # Name of the music library in your system (emby, jellyfin, plex)
+      # - LIBRARY_NAME=Music
+
+# ---------- Networks ----------
+networks:
+  arr-network:
+    driver: bridge
+  media-network:
+    driver: bridge

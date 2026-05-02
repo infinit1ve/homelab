@@ -1,0 +1,181 @@
+# Max's Homelab — Services Map
+# Hosts: Sonax (Unraid), Mirax (Proxmox), Nolax (Home Assistant)
+# Networks: Server VLAN (10.12.3.0/24), DMZ VLAN (10.12.10.0/24)
+
+direction: down
+
+internet: {
+  shape: cloud
+  label: Internet
+}
+
+ucg: {
+  label: "UCG Ultra + U7"
+  shape: hexagon
+  style.fill: "#1a202c"
+  style.font-color: "#ffffff"
+}
+
+internet -> ucg: WAN
+
+# ────── DMZ VLAN ──────
+dmz: {
+  label: "DMZ — 10.12.10.0/24"
+  style.fill: "#fef2f2"
+  style.stroke: "#dc2626"
+  style.stroke-dash: 4
+
+  public_proxy: "VM 105 — Public NPM\n10.12.10.2 :443" {
+    style.fill: "#ffffff"
+    style.stroke: "#dc2626"
+  }
+}
+
+# ────── Server VLAN ──────
+servers: {
+  label: "Server VLAN — 10.12.3.0/24"
+  style.fill: "#f1f5f9"
+  style.stroke: "#475569"
+  style.stroke-dash: 4
+
+  # ── Sonax (Unraid) ──
+  sonax: {
+    label: "Sonax — Unraid · 10.12.3.3"
+    style.fill: "#ffffff"
+
+    media: {
+      label: "media-network"
+      style.fill: "#f8fafc"
+      jellyfin: "jellyfin :4000"
+      jellystat: "jellystat :4006"
+      seerr: "seerr :4005"
+      jellyfin -> jellystat: {style.opacity: 0}
+      jellystat -> seerr: {style.opacity: 0}
+    }
+
+    arr: {
+      label: "arr-network"
+      style.fill: "#f8fafc"
+      sonarr: "sonarr :4001"
+      radarr: "radarr :4002"
+      lidarr: "lidarr :4003"
+      bazarr: "bazarr :4004"
+      prowlarr: "prowlarr :4008"
+      flaresolverr: "flaresolverr :4009"
+      bookshelf: "bookshelf :4012"
+      navidrome: "navidrome :4010"
+      # two parallel chains → 2 columns of 4
+      sonarr -> radarr: {style.opacity: 0}
+      radarr -> lidarr: {style.opacity: 0}
+      lidarr -> bazarr: {style.opacity: 0}
+      prowlarr -> flaresolverr: {style.opacity: 0}
+      flaresolverr -> bookshelf: {style.opacity: 0}
+      bookshelf -> navidrome: {style.opacity: 0}
+    }
+
+    default: {
+      label: "torrent"
+      style.fill: "#faf5ff"
+      style.stroke: "#7c3aed"
+      qbittorrent: "qbittorrent :4007\nvia container:gluetun"
+      gluetun: "gluetun :6881\n(VPN egress)"
+      qbittorrent -> gluetun: "all traffic" {
+        style.stroke: "#7c3aed"
+      }
+    }
+
+    paperless: {
+      label: "paperless_ngx"
+      style.fill: "#f8fafc"
+      ngx: "paperless-ngx :5003"
+      ai: "paperless-ai :6002"
+      ngx -> ai: {style.opacity: 0}
+    }
+
+    # Single-container services — no wrapper, split into two short chains
+    karakeep: "karakeep :5002" {style.fill: "#f8fafc"}
+    ghost: "ghost :9000" {style.fill: "#f8fafc"}
+    nextcloud: "nextcloud :5000" {style.fill: "#f8fafc"}
+    matrix: "matrix synapse :8008" {style.fill: "#f8fafc"}
+    immich: "immich :5004" {style.fill: "#f8fafc"}
+
+    karakeep -> ghost: {style.opacity: 0}
+    ghost -> nextcloud: {style.opacity: 0}
+    matrix -> immich: {style.opacity: 0}
+  }
+
+  # ── Mirax (Proxmox) ──
+  mirax: {
+    label: "Mirax — Proxmox · 10.12.3.4"
+    style.fill: "#ffffff"
+
+    adguard: "LXC 104 — AdGuard\n10.12.3.5 :53" {
+      style.fill: "#ffffff"
+      style.stroke: "#16a34a"
+    }
+
+    docker_vm: {
+      label: "VM 102 — Docker · 10.12.3.6"
+      style.fill: "#ffffff"
+
+      internal_npm: "Internal NPM\n:80 · :81 · :443" {
+        style.fill: "#fff7ed"
+        style.stroke: "#ea580c"
+      }
+      authentik: "authentik\n:2101 · :2102" {
+        style.fill: "#f8fafc"
+      }
+      vaultwarden: "vaultwarden :2103" {
+        style.fill: "#f8fafc"
+      }
+    }
+
+    adguard -> docker_vm: {style.opacity: 0}
+  }
+
+  # ── Nolax (Home Assistant) ──
+  nolax: "Nolax · 10.12.3.10\nHome Assistant :8123" {
+    style.fill: "#ffffff"
+  }
+}
+
+# ─── Traffic flow ───────────────────────────────────────
+
+# Public ingress (red)
+ucg -> dmz.public_proxy: "public HTTPS" {
+  style.stroke: "#dc2626"
+}
+dmz.public_proxy -> servers.mirax.docker_vm.internal_npm: "cascaded reverse proxy" {
+  style.stroke: "#dc2626"
+  style.stroke-dash: 3
+}
+
+# Internal proxy + auth (blue)
+servers.mirax.docker_vm.internal_npm -> servers.mirax.docker_vm.authentik: "forward auth" {
+  style.stroke: "#0369a1"
+}
+servers.mirax.docker_vm.internal_npm -> servers.mirax.docker_vm.vaultwarden: "proxy" {
+  style.stroke: "#0369a1"
+}
+servers.mirax.docker_vm.internal_npm -> servers.sonax: "routes to Sonax services" {
+  style.stroke: "#0369a1"
+}
+
+# DNS (green)
+ucg -> servers.mirax.adguard: "DNS · upstream resolver" {
+  style.stroke: "#16a34a"
+}
+
+# LAN plumbing (subtle)
+ucg -> servers.sonax: "LAN" {
+  style.stroke-dash: 2
+  style.opacity: 0.4
+}
+ucg -> servers.mirax: "LAN" {
+  style.stroke-dash: 2
+  style.opacity: 0.4
+}
+ucg -> servers.nolax: "LAN" {
+  style.stroke-dash: 2
+  style.opacity: 0.4
+}
