@@ -1,0 +1,101 @@
+# Template binary sensor that returns true when opening a window is worthwhile.
+# Uses three independent checks — all must pass:
+#   1. Indoor humidity is above the temperature-adjusted target
+#   2. Outdoor dew point is low enough relative to indoor (accounts for temp diff)
+#   3. Estimated time to reach target is above the minimum threshold (avoids
+#      notifying when only marginal improvement is possible)
+#
+# Add under template: > binary_sensor: in your configuration.yaml,
+# or drop into your templates folder if using packages.
+
+- name: "Living Room Worth Ventilating Humidity"
+  state: >
+    {# ╔═══════════════════════════════════════════════════════════════════╗ #}
+    {# ║                    TUNABLE PARAMETERS                             ║ #}
+    {# ╠═══════════════════════════════════════════════════════════════════╣ #}
+    {# ║  HUMIDITY TARGET FORMULA                                          ║ #}
+    {# ║  target = BASE + (indoor_temp - 20) × SLOPE                       ║ #}
+    {# ║  Example: At 18°C → 50 + (18-20) × 2 = 46%                        ║ #}
+    {# ╚═══════════════════════════════════════════════════════════════════╝ #}
+    {% set CFG_TARGET_BASE = 50 %}
+    {% set CFG_TARGET_SLOPE = 2 %}
+    {% set CFG_TARGET_MIN = 40 %}
+    {% set CFG_TARGET_MAX = 60 %}
+
+    {# ╔═══════════════════════════════════════════════════════════════════╗ #}
+    {# ║  DEW GAP FORMULA - How much drier outside air must be             ║ #}
+    {# ║  required_gap = BASE + (temp_diff × SLOPE)                        ║ #}
+    {# ║  Example: 16°C diff → 2.5 + 16 × 0.35 = 8.1°C dew gap needed      ║ #}
+    {# ╚═══════════════════════════════════════════════════════════════════╝ #}
+    {% set CFG_DEW_BASE = 2.5 %}
+    {% set CFG_DEW_SLOPE = 0.35 %}
+    {% set CFG_DEW_MIN = 2.0 %}
+    {% set CFG_DEW_MAX = 10.0 %}
+
+    {# ╔═══════════════════════════════════════════════════════════════════╗ #}
+    {# ║  MIXING EFFICIENCY - Air exchange prediction                      ║ #}
+    {# ║  efficiency = MAX - (temp_diff × DECAY), minimum MIN              ║ #}
+    {# ║  Example: 16°C diff → 0.55 - 16 × 0.01 = 0.39 (39%)               ║ #}
+    {# ╚═══════════════════════════════════════════════════════════════════╝ #}
+    {% set CFG_MIX_MAX = 0.55 %}
+    {% set CFG_MIX_DECAY = 0.010 %}
+    {% set CFG_MIX_MIN = 0.12 %}
+
+    {# ╔═══════════════════════════════════════════════════════════════════╗ #}
+    {# ║  TIMING - Ventilation duration limits                             ║ #}
+    {# ║  MIN_MINUTES: Minimum time needed to bother notifying             ║ #}
+    {# ║  MAX_MINUTES: Cap on estimated ventilation time                   ║ #}
+    {# ╚═══════════════════════════════════════════════════════════════════╝ #}
+    {% set CFG_MIN_MINUTES = 3 %}
+    {% set CFG_MAX_MINUTES = 10 %}
+    {# ═══════════════════════════════════════════════════════════════════ #}
+
+    {# Replace with your own indoor/outdoor temperature+humidity sensors #}
+    {% set in_t = states('sensor.YOUR_INDOOR_TEMPERATURE') | float(19) %}
+    {% set in_h = states('sensor.YOUR_INDOOR_HUMIDITY') | float(50) %}
+    {% set out_t = states('sensor.YOUR_OUTDOOR_TEMPERATURE') | float(0) %}
+    {% set out_h = states('sensor.YOUR_OUTDOOR_HUMIDITY') | float(0) %}
+
+    {# Dew point approximation: T - (100 - RH) / 5  (accurate within ~1°C for RH > 50%) #}
+    {% set in_dew = in_t - ((100 - in_h) / 5) %}
+    {% set out_dew = out_t - ((100 - out_h) / 5) %}
+    {% set temp_diff = (in_t - out_t) | abs %}
+    {% set dew_gap = in_dew - out_dew %}
+
+    {# Dynamic humidity target — warmer rooms tolerate lower humidity #}
+    {% set h_target = ([CFG_TARGET_MIN, (CFG_TARGET_BASE + (in_t - 20) * CFG_TARGET_SLOPE), CFG_TARGET_MAX] | sort)[1] %}
+
+    {# Required dew gap scales with temp difference — bigger draft = need more benefit to justify it #}
+    {% set required_dew_gap = ([CFG_DEW_MIN, (CFG_DEW_BASE + temp_diff * CFG_DEW_SLOPE), CFG_DEW_MAX] | sort)[1] %}
+
+    {# Mixing efficiency: how much of the indoor air is replaced per cycle #}
+    {% set mix_eff = [CFG_MIX_MIN, CFG_MIX_MAX - (temp_diff * CFG_MIX_DECAY)] | max %}
+
+    {# Theoretical humidity floor: what RH% outdoor air becomes once warmed to indoor temp.
+       Uses Magnus formula to convert relative → absolute humidity, then back at indoor temp. #}
+    {% set abs_out = out_h * 6.112 * (e**((17.67 * out_t)/(out_t + 243.5))) * 2.1674 / (273.15 + out_t) %}
+    {% set sat_in = 100 * 6.112 * (e**((17.67 * in_t)/(in_t + 243.5))) * 2.1674 / (273.15 + in_t) %}
+    {% set theo_floor = (abs_out / sat_in * 100) %}
+
+    {# Exponential decay time estimate: how many 10-min cycles to reach h_target
+       Solves decay^n = (target - floor) / (current - floor) for n #}
+    {% set decay = 1 - mix_eff %}
+    {% if in_h <= h_target or theo_floor >= h_target or decay <= 0 or decay >= 1 %}
+      {% set est_minutes = 0 %}
+    {% else %}
+      {% set r = (h_target - theo_floor) / (in_h - theo_floor) %}
+      {% if r <= 0 %}
+        {% set est_minutes = 0 %}
+      {% elif r >= 1 %}
+        {% set est_minutes = CFG_MAX_MINUTES + 1 %}
+      {% else %}
+        {% set est_minutes = 10 * (log(r) / log(decay)) %}
+      {% endif %}
+    {% endif %}
+
+    {# All three conditions must be true to trigger #}
+    {% set humidity_too_high = in_h >= h_target %}
+    {% set outside_air_helps = dew_gap > required_dew_gap %}
+    {% set worth_opening = est_minutes >= CFG_MIN_MINUTES %}
+
+    {{ humidity_too_high and outside_air_helps and worth_opening }}

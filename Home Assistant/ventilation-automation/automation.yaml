@@ -1,0 +1,160 @@
+alias: Ventilate Reminder Humidity
+description: Smart ventilation with accurate(-ish) time estimates
+
+triggers:
+  # Fire when the "worth ventilating" binary sensor has been on for 5 min
+  - trigger: state
+    entity_id: binary_sensor.living_room_worth_ventilating_humidity
+    to: "on"
+    for:
+      minutes: 5
+  # Also re-check every hour in case conditions changed
+  - trigger: time_pattern
+    minutes: "0"
+
+conditions:
+  # Only notify during waking hours
+  - condition: time
+    after: "06:00:00"
+    before: "22:00:00"
+
+  # Sensor must still be active (guards against hourly trigger firing when condition cleared)
+  - condition: state
+    entity_id: binary_sensor.living_room_worth_ventilating_humidity
+    state: "on"
+    for:
+      minutes: 5
+
+  # Only notify if someone is actually in the room
+  # Replace with your own presence sensor
+  - condition: state
+    entity_id: sensor.YOUR_PRESENCE_SENSOR
+    state: home
+    for:
+      minutes: 1
+
+actions:
+  # --- Tunable parameters ---
+  - variables:
+      CFG_MIX_MAX: 0.55 # Max air exchange fraction per ventilation cycle
+      CFG_MIX_DECAY: 0.01 # How much mixing drops per °C of temp difference
+      CFG_MIX_MIN: 0.12 # Minimum mixing fraction (always some exchange)
+      CFG_MIN_MINUTES: 3 # Minimum reported ventilation time
+      CFG_MAX_MINUTES: 10 # Cap — beyond this we report predicted result instead
+      CFG_TARGET_BASE: 50 # Base target humidity % at 20°C
+      CFG_TARGET_SLOPE: 2 # How much target shifts per °C above/below 20°C
+      CFG_TARGET_MIN: 40 # Hard floor for target humidity
+      CFG_TARGET_MAX: 60 # Hard ceiling for target humidity
+
+      # --- Read sensors ---
+      # Replace entity IDs with your own temperature/humidity sensors
+      in_t: "{{ states('sensor.YOUR_INDOOR_TEMPERATURE') | float(20) }}"
+      in_h: "{{ states('sensor.YOUR_INDOOR_HUMIDITY') | float(50) }}"
+      out_t: "{{ states('sensor.YOUR_OUTDOOR_TEMPERATURE') | float(10) }}"
+      out_h: "{{ states('sensor.YOUR_OUTDOOR_HUMIDITY') | float(50) }}"
+
+  # --- Intermediate calculations ---
+  - variables:
+      temp_diff: "{{ ((in_t | float) - (out_t | float)) | abs }}"
+
+      # Dynamic target: warmer room tolerates lower humidity, clamped to [min, max]
+      h_target: >-
+        {{ ([CFG_TARGET_MIN, (CFG_TARGET_BASE + ((in_t | float) - 20) *
+        CFG_TARGET_SLOPE), CFG_TARGET_MAX] | sort)[1] | round(1) }}
+
+      # Theoretical humidity floor: what RH% outdoor air becomes once warmed to indoor temp.
+      # Uses the Magnus approximation to convert between relative and absolute humidity.
+      # abs_out  = absolute moisture content of outdoor air (g/m³)
+      # sat_in   = saturation moisture at indoor temperature
+      # theo_floor = abs_out / sat_in — the lowest RH achievable by ventilating
+      theo_floor: >-
+        {% set ot = out_t | float %}
+        {% set oh = out_h | float %}
+        {% set it = in_t | float %}
+        {% set abs_out = oh * 6.112 * (e**((17.67 * ot)/(ot + 243.5))) * 2.1674 / (273.15 + ot) %}
+        {% set sat_in = 100 * 6.112 * (e**((17.67 * it)/(it + 243.5))) * 2.1674 / (273.15 + it) %}
+        {{ (abs_out / sat_in * 100) | round(1) }}
+
+      # Mixing efficiency drops slightly with larger temp difference (less window opening when cold)
+      mix_eff: >-
+        {% set td = temp_diff | float %}
+        {{ [CFG_MIX_MIN, CFG_MIX_MAX - (td * CFG_MIX_DECAY)] | max }}
+
+  # --- Predictions ---
+  - variables:
+      # Predicted humidity after one ventilation cycle: weighted average toward the floor
+      pred_h: >-
+        {% set ih = in_h | float %}
+        {% set tf = theo_floor | float %}
+        {% set me = mix_eff | float %}
+        {{ ((ih * (1 - me)) + (tf * me)) | round(1) }}
+
+      drop: "{{ ((in_h | float) - (pred_h | float)) | round(1) }}"
+
+      # Time estimate using exponential decay model:
+      # Each cycle multiplies remaining gap by decay = (1 - mix_eff)
+      # Solving decay^n = (target - floor) / (current - floor) for n, then × 10 min
+      est_minutes: >-
+        {% set ih = in_h | float %}
+        {% set tf = theo_floor | float %}
+        {% set ht = h_target | float %}
+        {% set me = mix_eff | float %}
+        {% set decay = 1 - me %}
+        {% if ih <= ht %}
+          {{ CFG_MIN_MINUTES }}
+        {% elif tf >= ht %}
+          {{ CFG_MAX_MINUTES + 1 }}
+        {% elif decay >= 1 or decay <= 0 %}
+          {{ CFG_MAX_MINUTES + 1 }}
+        {% else %}
+          {% set r = (ht - tf) / (ih - tf) %}
+          {% if r <= 0 %}
+            {{ CFG_MIN_MINUTES }}
+          {% elif r >= 1 %}
+            {{ CFG_MAX_MINUTES + 1 }}
+          {% else %}
+            {% set t = 10 * (log(r) / log(decay)) %}
+            {{ [[CFG_MIN_MINUTES, t | round(0)] | max, CFG_MAX_MINUTES] | min }}
+          {% endif %}
+        {% endif %}
+
+      will_reach_target: "{{ (pred_h | float) <= (h_target | float) }}"
+
+      # Human-readable time message
+      time_msg: |-
+        {% set est = est_minutes | int %}
+        {% if est <= CFG_MAX_MINUTES %}
+          ~{{ est }} min → {{ h_target | round(0) }}%
+        {% else %}
+          {{ CFG_MAX_MINUTES }} min → ~{{ pred_h | round(0) }}%
+        {% endif %}
+
+  # --- Notify ---
+  # Replace with your own notify target
+  - action: notify.YOUR_NOTIFY_TARGET
+    data:
+      title: >-
+        💨 {{ in_h | round(0) }}% → {{ [pred_h | round(0), h_target | round(0)] | min }}%
+      message: "{{ time_msg }} • Outside {{ out_t | round(1) }}°C"
+      data:
+        actions:
+          - action: WINDOW_OPENED
+            title: Window opened
+          - action: WINDOW_OPEN_DISMISS
+            title: Too cold
+            destructive: true
+
+  # Store calculated values for use by other automations (e.g. a window-open timer)
+  - action: input_number.set_value
+    target:
+      entity_id: input_number.ventilation_target_humidity
+    data:
+      value: "{{ h_target }}"
+
+  - action: input_number.set_value
+    target:
+      entity_id: input_number.ventilation_start_humidity
+    data:
+      value: "{{ in_h }}"
+
+mode: single

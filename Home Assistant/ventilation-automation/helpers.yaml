@@ -1,0 +1,24 @@
+# Input number helpers used by the ventilation automation.
+# Add these to your configuration.yaml under input_number:
+# or as separate files if using packages.
+
+input_number:
+  # Stores the calculated target humidity for the current session.
+  # Used by other automations (e.g. a window-open timer) to know when to stop.
+  ventilation_target_humidity:
+    name: Ventilation Target Humidity
+    min: 30
+    max: 70
+    step: 0.1
+    unit_of_measurement: "%"
+    icon: mdi:target
+
+  # Stores the indoor humidity at the moment ventilation started.
+  # Useful for tracking how much improvement occurred.
+  ventilation_start_humidity:
+    name: Ventilation Start Humidity
+    min: 0
+    max: 100
+    step: 0.1
+    unit_of_measurement: "%"
+    icon: mdi:water-percent
