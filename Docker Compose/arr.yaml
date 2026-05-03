@@ -188,7 +188,7 @@ services:
       - /your-path/navidrome:/data
       - /your-path/media/music:/music
     networks:
-      - arr-network
+      - media-network
 
   # ---------- Jellyfin ----------
   jellyfin:
