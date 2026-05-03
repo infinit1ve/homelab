@@ -17,7 +17,7 @@ Featuring over 25 ready-to-deploy docker images files. Full setups with in-conta
 ```
 mkdir homelab-[service]
 cd homelab-seerr
-curl -O https://raw.githubusercontent.com/infinit1ve/homelab/main/[service].yaml
+curl -O https://raw.githubusercontent.com/infinit1ve/homelab/refs/heads/main/Docker%20Compose/[service].yaml
 mv [service].yaml docker-compose.yaml
 # edit docker-compose.yaml with your values
 sudo docker compose up -d
