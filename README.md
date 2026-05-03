@@ -10,7 +10,7 @@ A small, personal corner of the internet
 
 ## Docker Compose YAMLs
 
-Featuring over 25 ready-to-deploy docker images files. Full setups with in-container routing ready.
+Featuring over 25 Docker images across ready-to-deploy Compose files. Full setups with in-container networking ready.
 
 ### Deployment
 
@@ -58,4 +58,4 @@ sudo docker compose up -d
 
 ## Disclaimer
 
-This setup uses media automation tools for managing and backing up personal media libraries. I do not endorse piracy. For issues with specific services or images, contact the respective project communities.
+This repo is a personal backup. Use it responsibly and in accordance with the laws in your country. For issues with specific services or images, reach out to the respective project communities.
